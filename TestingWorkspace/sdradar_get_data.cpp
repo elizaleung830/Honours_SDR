@@ -48,7 +48,7 @@ void sdradar_get_data(size_t buffer_size, unsigned char *buffer_char)
     sdr_handle = libusb_open_device_with_vid_pid (sdr_context, SDR_USB_VID, SDR_USB_PID);
     if (!sdr_handle)
         mexErrMsgTxt("Error: LibUSB could not find a matching VID/PID or an error was encountered.");
-
+    
 	// Claim the USB Interface
     if (libusb_claim_interface (sdr_handle, 0) != LIBUSB_SUCCESS)
         mexErrMsgTxt("Error: Could not claim interface 0.");

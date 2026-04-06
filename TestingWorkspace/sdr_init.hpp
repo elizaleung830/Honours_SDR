@@ -4,7 +4,7 @@
 #include <thread>
 
 // Include LibUSB
-#include "libusb.h"
+#include "libusb-1.0/libusb.h"
 
 // Setup Cypress VID/PID
 #define SDR_USB_VID 0x04b4
@@ -46,6 +46,11 @@ void initialize ()
         sdr_handle = libusb_open_device_with_vid_pid (sdr_context, SDR_USB_VID, SDR_USB_PID);
         if (!sdr_handle)
             throw std::runtime_error("Error: LibUSB could not find a matching VID/PID or an error was encountered.");
+
+        // Detach Kernal driver
+        if (libusb_kernel_driver_active(sdr_handle, 0) == 1){
+            libusb_detach_kernel_driver(sdr_handle,0);
+        }
 
         // Read the current value of the CPUCS register
         unsigned char reset_char;

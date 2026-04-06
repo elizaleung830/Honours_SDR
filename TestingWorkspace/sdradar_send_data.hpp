@@ -4,12 +4,8 @@
 #include <iostream>
 #include <stdexcept>
 
-// Include Matlab
-#include "mex.h"
-#include "matrix.h"
-
 // Include LibUSB
-#include "libusb.h"
+#include "libusb-1.0/libusb.h"
 
 // Setup Cypress VID/PID
 #define SDR_USB_VID 0x04b4
@@ -40,20 +36,25 @@ int sdradar_send_data(unsigned char* instruction_buffer, size_t buffer_size){
 
 	// Initialize LibUSB
     if (libusb_init (&sdr_context) != LIBUSB_SUCCESS)
-		mexErrMsgTxt("Error: Could not initialize LibUSB.");
+		throw std::runtime_error("Error: Could not initialize LibUSB.");
 
     // Open the device matching our SDR's VID and PID
     sdr_handle = libusb_open_device_with_vid_pid (sdr_context, SDR_USB_VID, SDR_USB_PID);
     if (!sdr_handle)
-        mexErrMsgTxt("Error: LibUSB could not find a matching VID/PID or an error was encountered.");
+        throw std::runtime_error("Error: LibUSB could not find a matching VID/PID or an error was encountered.");
+
+    // Detach Kernal driver
+    if (libusb_kernel_driver_active(sdr_handle, 0) == 1){
+        libusb_detach_kernel_driver(sdr_handle,0);
+    }
 
 	// Claim the USB Interface
     if (libusb_claim_interface (sdr_handle, 0) != LIBUSB_SUCCESS)
-        mexErrMsgTxt("Error: Could not claim interface 0.");
+        throw std::runtime_error("Error: Could not claim interface 0.");
 
 	// Set alternate interface
 	if (libusb_set_interface_alt_setting (sdr_handle, 0, 1) != LIBUSB_SUCCESS)
-		mexErrMsgTxt("Error: Could not set interface 0 to alternate setting (1).");
+		throw std::runtime_error("Error: Could not set interface 0 to alternate setting (1).");
 
     // Keep track of the number of bytes transfered to the device
     int bytes_sent = 0;
@@ -76,25 +77,5 @@ int sdradar_send_data(unsigned char* instruction_buffer, size_t buffer_size){
     if (sdr_context) libusb_exit (sdr_context);
 
     return bytes_sent;
-
-}
-
-
-void mexFunction(
-         int          nlhs,
-         mxArray      *plhs[],
-         int          nrhs,
-         const mxArray *prhs[]
-         )
-{
-    // instruction input
-    size_t rows = mxGetM(prhs[0]);
-    unsigned char* instruction_buffer;
-    instruction_buffer = (unsigned char*) mxGetData(prhs[0]);
-
-    // bytes send output
-    plhs[0] = mxCreateNumericMatrix(1,1,mxUINT16_CLASS,mxREAL);
-    int *bytes_sent = (int *) mxGetData(plhs[0]);
-    *bytes_sent = sdradar_send_data( instruction_buffer, rows);
 
 }

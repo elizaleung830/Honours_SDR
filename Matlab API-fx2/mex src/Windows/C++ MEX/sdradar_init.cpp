@@ -1,0 +1,183 @@
+// Standard Includes
+#include <iostream>
+#include <stdexcept>
+#include <thread>
+
+// Include Matlab
+#include "mex.h"
+
+// Include LibUSB
+#include "libusb.h"
+
+// Setup Cypress VID/PID
+#define SDR_USB_VID 0x04b4
+#define SDR_USB_PID 0x8613
+
+// Setup LibUSB Endpoints
+#define SDR_ENDPOINT_RX 0x86                    // Endpoint - Device to PC
+#define SDR_ENDPOINT_TX 0x02                    // Endpoint - PC to Device
+
+// Define Timeouts
+#define SDR_TIMEOUT_FIRMWARE_WRITE_MS 1000      // Firmware write timeout
+#define SDR_TIMEOUT_DEVICE_RESET_MS 1000        // Device reset timeout
+#define SDR_TIMEOUT_READ_DATA_MS 1000           // Read data from device timeout
+#define SDR_TIMEOUT_READ_INFINITE 0             // Read data infinetely
+
+
+
+// Initialize LibUSB Device
+void initialize ()
+{
+	// LibUSB Context
+	libusb_context *sdr_context;
+
+	// LibUSB Device Handle
+	libusb_device_handle *sdr_handle;
+
+	// Initialize LibUSB pointers to NULL
+	sdr_context = NULL;
+	sdr_handle = NULL;
+
+    // Throw an error if we encounter any problems
+    try
+    {
+        // Initialize LibUSB
+        if (libusb_init (&sdr_context) != LIBUSB_SUCCESS)
+            mexErrMsgTxt("Error: Could not initialize LibUSB.");
+
+        // Open the device matching our SDR's VID and PID
+        sdr_handle = libusb_open_device_with_vid_pid (sdr_context, SDR_USB_VID, SDR_USB_PID);
+        if (!sdr_handle)
+            mexErrMsgTxt("Error: LibUSB could not find a matching VID/PID or an error was encountered.");
+
+        // Read the current value of the CPUCS register
+        unsigned char reset_char;
+        if (libusb_control_transfer (sdr_handle, 0xc0, 0xa0, 0xe600, 0, &reset_char, 1, SDR_TIMEOUT_DEVICE_RESET_MS) != 1)
+            mexErrMsgTxt("Error: Could not read the CPUCS register.");
+
+        // Place the device into reset
+        reset_char = reset_char | 0x01;
+        if (libusb_control_transfer (sdr_handle, 0x40, 0xa0, 0xe600, 0, &reset_char, 1, SDR_TIMEOUT_DEVICE_RESET_MS) != 1)
+            mexErrMsgTxt("Error: Could not bring the device into reset mode.");
+
+        // Sleep for 100ms (wait for device to enter reset)
+        std::this_thread::sleep_for (std::chrono::milliseconds (100));
+
+        // Cypress FX2LP USB Firmware
+        // [0] Length of data to write
+        // [2] Address start of write
+        // [4] Start of data to write
+        unsigned char firmware[15][21] = {
+            {0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0xB8, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+            {0x0C, 0x00, 0xB8, 0x00, 0x78, 0x7F, 0xE4, 0xF6, 0xD8, 0xFD, 0x75, 0x81, 0x07, 0x02, 0x00, 0x03, 0x94, 0x00, 0x00, 0x00, 0x00},
+            {0x10, 0x00, 0x03, 0x00, 0x90, 0xE6, 0x00, 0x74, 0x12, 0xF0, 0x00, 0x00, 0x00, 0xA3, 0x74, 0xCB, 0xF0, 0x00, 0x00, 0x00, 0x2F},
+            {0x10, 0x00, 0x13, 0x00, 0x90, 0xE6, 0x0B, 0x74, 0x01, 0xF0, 0x00, 0x00, 0x00, 0x90, 0xE6, 0x12, 0x74, 0xA2, 0xF0, 0x00, 0x69},
+            {0x10, 0x00, 0x23, 0x00, 0x00, 0x00, 0x90, 0xE6, 0x14, 0x74, 0xE0, 0xF0, 0x00, 0x00, 0x00, 0xE4, 0x90, 0xE6, 0x13, 0xF0, 0xA2},
+            {0x10, 0x00, 0x33, 0x00, 0x00, 0x00, 0x00, 0x90, 0xE6, 0x15, 0xF0, 0x00, 0x00, 0x00, 0x90, 0xE6, 0x04, 0x74, 0x80, 0xF0, 0xE4},
+            {0x10, 0x00, 0x43, 0x00, 0x00, 0x00, 0x00, 0x74, 0x82, 0xF0, 0x00, 0x00, 0x00, 0x74, 0x84, 0xF0, 0x00, 0x00, 0x00, 0x74, 0x6B},
+            {0x10, 0x00, 0x53, 0x00, 0x86, 0xF0, 0x00, 0x00, 0x00, 0x74, 0x88, 0xF0, 0x00, 0x00, 0x00, 0xE4, 0xF0, 0x00, 0x00, 0x00, 0x67},
+            {0x10, 0x00, 0x63, 0x00, 0x90, 0xE6, 0x1A, 0x74, 0x0D, 0xF0, 0x00, 0x00, 0x00, 0x90, 0xE6, 0x18, 0x74, 0x01, 0xF0, 0x00, 0x99},
+            {0x10, 0x00, 0x73, 0x00, 0x00, 0x00, 0x74, 0x11, 0xF0, 0x00, 0x00, 0x00, 0xE4, 0x90, 0xE6, 0x09, 0xF0, 0x00, 0x00, 0x00, 0xB5},
+            {0x10, 0x00, 0x83, 0x00, 0x90, 0xE6, 0x02, 0x74, 0xE0, 0xF0, 0x00, 0x00, 0x00, 0xA3, 0x74, 0x08, 0xF0, 0x00, 0x00, 0x00, 0xA2},
+            {0x10, 0x00, 0x93, 0x00, 0x90, 0xE6, 0x24, 0x74, 0x02, 0xF0, 0x00, 0x00, 0x00, 0xE4, 0xA3, 0xF0, 0x00, 0x00, 0x00, 0x90, 0x56},
+            {0x10, 0x00, 0xA3, 0x00, 0xE6, 0x34, 0x74, 0x80, 0xF0, 0x00, 0x00, 0x00, 0xE4, 0xA3, 0xF0, 0x90, 0xE6, 0x70, 0x74, 0x40, 0x3E},
+            {0x05, 0x00, 0xB3, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x22, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+            {0x00, 0x00, 0x00, 0x01, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+        };
+
+        // Declare the number firmware rows
+        const int firmware_rows = 15;
+
+        // Iterate through each row of our firmware
+        for (int row = 0; row < firmware_rows; row++)
+        {
+            // Determine the length (in bytes) to write
+            unsigned int write_length = firmware[row][0];
+
+            // Ensure the write_length is greater than zero
+            if (write_length > 0)
+            {
+                // Determine the address to start writing
+                unsigned int write_address = firmware[row][2];
+
+                // Transfer firmware to the device
+                if (libusb_control_transfer (sdr_handle, 0x40, 0xa0, write_address, 0, firmware[row] + 4, write_length, SDR_TIMEOUT_FIRMWARE_WRITE_MS) != write_length)
+                    mexErrMsgTxt("ERROR: Firmware did not write the desired number of bytes.");
+            }
+        }
+
+        // Bring the device out of the reset state
+        reset_char = reset_char & 0xFE;
+        if (libusb_control_transfer (sdr_handle, 0x40, 0xa0, 0xe600, 0, &reset_char, 1, SDR_TIMEOUT_DEVICE_RESET_MS) != 1)
+            mexErrMsgTxt("Error: Could not bring the device out of reset mode.");
+
+        // Sleep for 100ms (wait for device to come out of reset and re-enumerate)
+        std::this_thread::sleep_for (std::chrono::milliseconds (500));
+
+/*        // Release the LibUSB interface claimed for the handle
+        if (sdr_handle) libusb_release_interface (sdr_handle, 0);
+
+        // Close the SDR LibUSB device handle
+        if (sdr_handle) libusb_close (sdr_handle);
+
+        // Open the device matching the updated VID and PID
+        sdr_handle = libusb_open_device_with_vid_pid (sdr_context, SDR_USB_VID, SDR_USB_PID);
+        if (!sdr_handle)
+            mexErrMsgTxt("Error: LibUSB could not find a matching VID/PID or an error was encountered.");
+
+        // Claim the USB Interface
+        if (libusb_claim_interface (sdr_handle, 0) != LIBUSB_SUCCESS)
+            mexErrMsgTxt("Error: Could not claim interface 0.");
+
+        // Set alternate interface
+        if (libusb_set_interface_alt_setting (sdr_handle, 0, 1) != LIBUSB_SUCCESS)
+            mexErrMsgTxt("Error: Could not set interface 0 to alternate setting (1).");*/
+    }
+
+    // Catch and report any error encountered
+    catch (const std::runtime_error &e)
+    {
+        // Release the LibUSB interface claimed for the handle
+        if (sdr_handle) libusb_release_interface (sdr_handle, 0);
+
+        // Close the SDR LibUSB device handle
+        if (sdr_handle) libusb_close (sdr_handle);
+
+        // Destroy the LibUSB context
+        if (sdr_context) libusb_exit (sdr_context);
+
+        // Print out the error message
+        std::cerr << e.what () << std::endl;
+
+        // Exit
+        exit (-1);
+    }
+
+
+    // Release the LibUSB interface claimed for the handle
+    if (sdr_handle) libusb_release_interface (sdr_handle, 0);
+
+    // Close the SDR LibUSB device handle
+    if (sdr_handle) libusb_close (sdr_handle);
+
+    // Destroy the LibUSB context
+    if (sdr_context) libusb_exit (sdr_context);
+}
+
+
+void mexFunction(
+		 int          nlhs,
+		 mxArray      *[],
+		 int          nrhs,
+		 const mxArray *prhs[]
+		 )
+{
+	initialize();
+	return;	
+}
+
+
+
+
+
+
